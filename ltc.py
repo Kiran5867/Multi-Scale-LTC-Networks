@@ -113,6 +113,42 @@ class ParallelMultiScaleLTCModel(nn.Module):
         out = self.fc(hidden_state4)
         return out, dx_dt_values
     
+class ParallelMultiScaleLTCModel2(nn.Module):
+    def __init__(self, input_size=2, hidden_size=30, output_size=2, tau1=0.7, tau2=1.0, tau3=10.0, tau4=1.0):
+        super(ParallelMultiScaleLTCModel2, self).__init__()
+        self.ltc_layer1_ltc1 = LTC(input_size, hidden_size, tau=tau1)
+        self.ltc_layer1_ltc2 = LTC(input_size, hidden_size, tau=tau2)
+        self.ltc_layer1_ltc3 = LTC(input_size, hidden_size, tau=tau3)
+        self.linearCat_layer = nn.Linear(hidden_size*3, hidden_size)
+        self.ltc_layer2 = LTC(hidden_size, hidden_size, tau=tau4)
+        self.fc = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        batch_size, seq_length, _ = x.size()
+        hidden_state1 = self.ltc_layer1_ltc1.initialize_hidden_state(batch_size).to(x.device)
+        hidden_state2 = self.ltc_layer1_ltc2.initialize_hidden_state(batch_size).to(x.device)
+        hidden_state3 = self.ltc_layer1_ltc3.initialize_hidden_state(batch_size).to(x.device)
+        hidden_state4 = self.ltc_layer2.initialize_hidden_state(batch_size).to(x.device)
+
+        dx_dt_values = {'layer1': [], 'layer2': [], 'layer3': [], 'layer4': []}
+        
+        for t in range(seq_length):
+            hidden_state1, dx_dt1 = self.ltc_layer1_ltc1(x[:, t, :], hidden_state1)
+            hidden_state2, dx_dt2 = self.ltc_layer1_ltc2(x[:, t, :], hidden_state2)
+            hidden_state3, dx_dt3 = self.ltc_layer1_ltc3(x[:, t, :], hidden_state3)
+            linearCat_out = self.linearCat_layer(torch.cat((hidden_state1, hidden_state2, hidden_state3), dim=1))
+            hidden_state4, dx_dt4 = self.ltc_layer2(linearCat_out , hidden_state4)
+            
+
+            # Collect dx/dt values for each layer
+            dx_dt_values['layer1'].append(dx_dt1)
+            dx_dt_values['layer2'].append(dx_dt2)
+            dx_dt_values['layer3'].append(dx_dt3)
+            dx_dt_values['layer4'].append(dx_dt4)
+
+        out = self.fc(hidden_state4)
+        return out, dx_dt_values
+    
 def train_LTC_model(train_loader, val_loader, model, criterion, optimizer, device, epochs=30):
     best_val_loss = float('inf')
     best_epoch = 0
